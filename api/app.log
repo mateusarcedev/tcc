@@ -1,0 +1,2 @@
+2024-11-24 14:59:03,481 - Enviado para o Arduino: {'produto_id': '12345', 'categoria': 'smartphones', 'descricao': 'Smartphone XYZ', 'peso': 0.5, 'altura': 15.0, 'status': 'Válido'}
+2024-11-24 15:00:35,427 - Enviado para o Arduino: {'produto_id': '12345', 'categoria': 'tablets', 'descricao': 'Smartphone XYZ', 'peso': 0.5, 'altura': 15.0, 'status': 'Válido'}
