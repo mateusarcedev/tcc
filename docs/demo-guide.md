@@ -22,6 +22,8 @@ Suggested output path:
 docs/media/conveyor-demo.gif
 ```
 
+Media naming and portfolio accuracy rules: [media/README.md](media/README.md)
+
 Once the GIF exists, place it near the top of the root README.
 
 ## Recommended full video
