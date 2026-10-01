@@ -122,7 +122,7 @@ http://127.0.0.1:8000/docs
 
 ```bash
 cd dashboard
-npm install
+npm ci
 npm run dev
 ```
 
