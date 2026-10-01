@@ -204,10 +204,18 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+    except sqlite3.Error as exc:
+        logging.error("Database health check failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
     return {
         "status": "ok",
-        "database": str(DATABASE_PATH),
+        "database": "ok",
         "serial_enabled": SERIAL_ENABLED,
+        "serial_mode": "hardware" if SERIAL_ENABLED else "simulation",
     }
 
 
