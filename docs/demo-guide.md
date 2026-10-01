@@ -1,6 +1,8 @@
 # Demo Capture Guide
 
-The strongest portfolio artifact for this project is a short visual demonstration of the complete physical flow.
+Before recording the physical prototype, verify the software path with [software-demo.md](software-demo.md). This gives you a known-good API/database/dashboard flow before involving camera or actuator troubleshooting.
+
+The strongest final portfolio artifact is a short visual demonstration of the complete physical flow.
 
 ## Recommended GIF
 

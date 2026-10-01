@@ -5,28 +5,29 @@
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-const int servoPin1 = 12;
-const int servoPin2 = 13;
-const int motorPin = 6;
+constexpr uint8_t SERVO_PIN_1 = 12;
+constexpr uint8_t SERVO_PIN_2 = 13;
+constexpr uint8_t MOTOR_PWM_PIN = 6;
+
+constexpr uint8_t CONVEYOR_SPEED = 190;
+constexpr int SERVO_1_HOME = 90;
+constexpr int SERVO_2_HOME = 0;
+constexpr int SERVO_1_ROUTE = 0;
+constexpr int SERVO_2_ROUTE = 180;
+
+constexpr unsigned long DISPLAY_IDLE_INTERVAL_MS = 3000;
 
 Servo servo1;
 Servo servo2;
 
-const int velocidadeEsteira = 190;
-const int posEretoServo1 = 90;
-const int posEretoServo2 = 0;
-const int abaixadoServo1 = 0;
-const int abaixadoServo2 = 180;
+unsigned long lastActionAt = 0;
 
-unsigned long ultimaAcao = 0;
-const unsigned long tempoEspera = 3000;
-
-void sendAck(bool ok, const char* produtoId, const char* error = nullptr) {
-  StaticJsonDocument<160> response;
+void sendAck(bool ok, const char* productId, const char* error = nullptr) {
+  JsonDocument response;
   response["ok"] = ok;
 
-  if (produtoId != nullptr) {
-    response["produto_id"] = produtoId;
+  if (productId != nullptr) {
+    response["produto_id"] = productId;
   }
 
   if (error != nullptr) {
@@ -37,20 +38,20 @@ void sendAck(bool ok, const char* produtoId, const char* error = nullptr) {
   Serial.println();
 }
 
-void desviarPacote(
+void routePackage(
   Servo& servo,
-  int posicaoAbaixada,
-  int posicaoEreta,
-  const char* mensagem
+  int routePosition,
+  int homePosition,
+  const char* displayMessage
 ) {
   lcd.clear();
-  lcd.print(mensagem);
+  lcd.print(displayMessage);
 
-  servo.write(posicaoAbaixada);
+  servo.write(routePosition);
   delay(2000);
-  servo.write(posicaoEreta);
+  servo.write(homePosition);
 
-  ultimaAcao = millis();
+  lastActionAt = millis();
 }
 
 void setup() {
@@ -62,14 +63,14 @@ void setup() {
   lcd.print("Iniciando...");
   delay(1000);
 
-  servo1.attach(servoPin1);
-  servo2.attach(servoPin2);
+  servo1.attach(SERVO_PIN_1);
+  servo2.attach(SERVO_PIN_2);
 
-  servo1.write(posEretoServo1);
-  servo2.write(posEretoServo2);
+  servo1.write(SERVO_1_HOME);
+  servo2.write(SERVO_2_HOME);
 
-  pinMode(motorPin, OUTPUT);
-  analogWrite(motorPin, velocidadeEsteira);
+  pinMode(MOTOR_PWM_PIN, OUTPUT);
+  analogWrite(MOTOR_PWM_PIN, CONVEYOR_SPEED);
 
   lcd.clear();
   lcd.print("Sistema Pronto!");
@@ -79,10 +80,10 @@ void setup() {
 
 void loop() {
   if (Serial.available() > 0) {
-    StaticJsonDocument<256> doc;
-    String dados = Serial.readStringUntil('\n');
+    JsonDocument doc;
+    String input = Serial.readStringUntil('\n');
 
-    DeserializationError error = deserializeJson(doc, dados);
+    DeserializationError error = deserializeJson(doc, input);
 
     if (error) {
       lcd.clear();
@@ -91,36 +92,36 @@ void loop() {
       return;
     }
 
-    const char* categoria = doc["categoria"];
+    const char* category = doc["categoria"];
     const char* status = doc["status"];
-    const char* produtoId = doc["produto_id"];
+    const char* productId = doc["produto_id"];
 
-    if (categoria == nullptr || status == nullptr) {
+    if (category == nullptr || status == nullptr) {
       lcd.clear();
       lcd.print("Dados invalidos");
-      sendAck(false, produtoId, "missing_fields");
+      sendAck(false, productId, "missing_fields");
       return;
     }
 
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print(categoria);
+    lcd.print(category);
     lcd.setCursor(0, 1);
     lcd.print(status);
 
     if (strcmp(status, "Válido") == 0) {
-      if (strcmp(categoria, "smartphones") == 0) {
-        desviarPacote(
+      if (strcmp(category, "smartphones") == 0) {
+        routePackage(
           servo1,
-          abaixadoServo1,
-          posEretoServo1,
+          SERVO_1_ROUTE,
+          SERVO_1_HOME,
           "Smartphone"
         );
-      } else if (strcmp(categoria, "tablets") == 0) {
-        desviarPacote(
+      } else if (strcmp(category, "tablets") == 0) {
+        routePackage(
           servo2,
-          abaixadoServo2,
-          posEretoServo2,
+          SERVO_2_ROUTE,
+          SERVO_2_HOME,
           "Tablet"
         );
       }
@@ -130,12 +131,12 @@ void loop() {
       delay(2000);
     }
 
-    sendAck(true, produtoId);
+    sendAck(true, productId);
   }
 
-  if (millis() - ultimaAcao > tempoEspera) {
+  if (millis() - lastActionAt > DISPLAY_IDLE_INTERVAL_MS) {
     lcd.clear();
     lcd.print("Aguardando...");
-    ultimaAcao = millis();
+    lastActionAt = millis();
   }
 }
