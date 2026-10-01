@@ -267,6 +267,7 @@ arduino-cli core update-index
 arduino-cli core install arduino:avr
 arduino-cli lib install "ArduinoJson@7.4.3"
 arduino-cli lib install "LiquidCrystal I2C@1.1.2"
+arduino-cli lib install "Servo@1.3.0"
 arduino-cli compile --warnings all --fqbn arduino:avr:uno Arduino/esteira
 ```
 
