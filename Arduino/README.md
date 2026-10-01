@@ -18,7 +18,7 @@ The CI reference build uses:
 | Arduino AVR core | current indexed compatible release |
 | ArduinoJson | 7.4.3 |
 | LiquidCrystal I2C | 1.1.2 |
-| Servo | provided by Arduino ecosystem/core dependency |
+| Servo | 1.3.0 |
 | Wire | Arduino core |
 
 ArduinoJson 7.4.3 is intentionally pinned because it contains the March 2026 buffer-overrun fix.
@@ -34,6 +34,7 @@ arduino-cli core update-index
 arduino-cli core install arduino:avr
 arduino-cli lib install "ArduinoJson@7.4.3"
 arduino-cli lib install "LiquidCrystal I2C@1.1.2"
+arduino-cli lib install "Servo@1.3.0"
 arduino-cli compile --fqbn arduino:avr:uno Arduino/esteira
 ```
 
