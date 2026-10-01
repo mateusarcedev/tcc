@@ -1,148 +1,119 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
 import cv2
 import requests
-import json
-import time
+from dotenv import load_dotenv
 from pyzbar.pyzbar import decode
-import serial
-import logging
 
-# Configuração do logging
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR.parent / ".env")
+
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-# Configurações
-API_URL = "http://localhost:8000/produto"
-ARDUINO_PORT = "/dev/cu.usbserial-120"
-BAUD_RATE = 9600
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000/produto")
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
 
-class ArduinoController:
-    def __init__(self, port, baud_rate):
-        self.port = port
-        self.baud_rate = baud_rate
-        self.serial = None
-        self.connect()
 
-    def connect(self):
-        try:
-            if self.serial is not None:
-                self.serial.close()
-            self.serial = serial.Serial(self.port, self.baud_rate, timeout=1)
-            time.sleep(2)  # Aguarda inicialização
-            logging.info("Conexão serial estabelecida com sucesso")
-            return True
-        except serial.SerialException as e:
-            logging.error(f"Erro ao conectar com Arduino: {e}")
-            return False
+def send_to_backend(qr_data: dict[str, Any]) -> dict[str, Any] | None:
+    headers = {"X-API-Key": API_TOKEN} if API_TOKEN else {}
 
-    def send_command(self, category, status):
-        if not self.serial or not self.serial.is_open:
-            if not self.connect():
-                logging.error("Não foi possível enviar comando - Arduino não conectado")
-                return False
-
-        try:
-            command = {
-                "categoria": category,
-                "status": status
-            }
-            msg = json.dumps(command) + "\n"
-            self.serial.write(msg.encode())
-            self.serial.flush()
-            logging.debug(f"Comando enviado para Arduino: {msg.strip()}")
-            return True
-        except Exception as e:
-            logging.error(f"Erro ao enviar comando: {e}")
-            return False
-
-    def close(self):
-        if self.serial:
-            self.serial.close()
-
-def salvar_no_backend(qr_data):
     try:
-        # Envia os dados para o backend (registro no dashboard)
-        response = requests.post(API_URL, json=qr_data)
-        if response.status_code == 200:
-            logging.info(f"Dados salvos no backend: {qr_data}")
-        else:
-            logging.warning(f"Erro ao salvar no backend: {response.status_code}")
-    except requests.RequestException as e:
-        logging.error(f"Erro de conexão com backend: {e}")
+        response = requests.post(
+            API_URL,
+            json=qr_data,
+            headers=headers,
+            timeout=5,
+        )
+        response.raise_for_status()
+        result = response.json()
+        logging.info(
+            "Package %s processed with status %s",
+            qr_data.get("produto_id"),
+            result.get("status"),
+        )
+        return result
+    except requests.RequestException as exc:
+        logging.error("Backend request failed: %s", exc)
+        return None
 
-def ler_qrcode():
-    # Inicializa a câmera
-    cap = cv2.VideoCapture(0)
-    ultimo_qr = ""
-    
-    # Inicializa o controle do Arduino
-    arduino = ArduinoController(ARDUINO_PORT, BAUD_RATE)
+
+def read_qr_codes() -> None:
+    capture = cv2.VideoCapture(0)
+    last_qr = ""
+
+    if not capture.isOpened():
+        raise RuntimeError("Unable to open camera index 0")
 
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
+            ok, frame = capture.read()
+            if not ok:
                 continue
 
-            # Adiciona texto informativo na imagem
-            cv2.putText(frame, "Pressione 'q' para sair", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(
+                frame,
+                "Pressione 'q' para sair",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+            )
 
             for code in decode(frame):
-                dados = code.data.decode("utf-8")
-                if dados != ultimo_qr:
-                    ultimo_qr = dados
-                    logging.info(f"Novo QR Code detectado: {dados}")
+                raw_data = code.data.decode("utf-8")
 
-                    try:
-                        # Decodifica o JSON do QR Code
-                        qr_data = json.loads(dados)
+                if raw_data == last_qr:
+                    continue
+                last_qr = raw_data
 
-                        # Depuração: Imprime a categoria detectada
-                        categoria_detectada = qr_data.get('categoria', '')
-                        logging.debug(f"Categoria detectada: {categoria_detectada}")
-                        
-                        # Verifica a categoria e define o status
-                        if categoria_detectada.lower() in ["smartphones", "tablets"]:
-                            status = "Válido"
-                        else:
-                            status = "Inválido"
-                        
-                        # Adiciona o campo de status no JSON antes de enviar para o Arduino
-                        qr_data["status"] = status
+                try:
+                    qr_data = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    logging.warning("Invalid QR JSON ignored")
+                    continue
 
-                        # Depuração: Mostra o status atribuído
-                        logging.debug(f"Status atribuído: {status}")
+                result = send_to_backend(qr_data)
+                if result is None:
+                    label = "API indisponivel"
+                else:
+                    label = f"Status: {result.get('status', 'N/A')}"
 
-                        # Se o status for Válido, envia comando para o Arduino
-                        if status == "Válido":
-                            arduino.send_command(categoria_detectada, status)
-                        
-                        # Mostra feedback visual
-                        cv2.putText(frame, f"Categoria: {qr_data.get('categoria', 'N/A')}", 
-                                  (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                        cv2.putText(frame, f"Status: {status}", 
-                                  (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-                        # Sempre salva os dados no backend, independentemente do status
-                        salvar_no_backend(qr_data)
-
-                    except json.JSONDecodeError:
-                        logging.error(f"QR Code inválido: {dados}")
-                        continue
-                    except Exception as e:
-                        logging.error(f"Erro ao processar QR Code: {e}")
-                        continue
+                cv2.putText(
+                    frame,
+                    f"Categoria: {qr_data.get('categoria', 'N/A')}",
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.putText(
+                    frame,
+                    label,
+                    (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
 
             cv2.imshow("Leitor de QR Code", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-                
     finally:
-        cap.release()
+        capture.release()
         cv2.destroyAllWindows()
-        arduino.close()
+
 
 if __name__ == "__main__":
-    ler_qrcode()
+    read_qr_codes()
