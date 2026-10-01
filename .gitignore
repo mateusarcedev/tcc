@@ -1,8 +1,39 @@
-app/node_modules/
-./app/node_modules/
-/app/node_modules/
+# macOS
+.DS_Store
 
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-dashboard/node_modules/
-./dashboard/node_modules/
-/dashboard/node_modules/
+# Runtime data
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node / frontend builds
+node_modules/
+.next/
+dist/
+web-build/
+coverage/
+
+# Expo
+.expo/
+
+# IDE
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo

@@ -1,7 +1,9 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import axios from "axios"
+import { useEffect, useState } from "react";
+
+import { api } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -9,70 +11,67 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
+} from "@/components/ui/table";
 
-// Define o tipo dos dados
 type ProductData = {
-  descricao: ReactNode
-  timestamp: ReactNode
-  produto_id: ReactNode
-  id: string
-  categoria: string
-  status: string
-  data: string
-  peso: string
-  altura: string
-}
+  produto_id: string;
+  categoria: string;
+  descricao: string;
+  status: string;
+  timestamp: string;
+  peso: number;
+  altura: number;
+};
 
 export function DataTable() {
-  const [data, setData] = useState<ProductData[]>([])  // Estado para armazenar os dados
-  const [loading, setLoading] = useState<boolean>(true)  // Estado de carregamento
-  const [error, setError] = useState<string>("")  // Estado de erro
+  const [data, setData] = useState<ProductData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    // Função para buscar os dados da API
     const fetchData = async () => {
       try {
-        const response = await axios.get("http://localhost:8000/api/ultimos_produtos")  // Atualize com o endpoint correto da sua API
-        console.log(response.data)
-        setData(response.data)  // Armazena os dados recebidos da API
-      } catch (error) {
-        setError("Erro ao carregar dados.")  // Trata erros
+        const response = await api.get<ProductData[]>("/api/ultimos_produtos");
+        setData(response.data);
+        setError("");
+      } catch {
+        setError("Erro ao carregar dados.");
       } finally {
-        setLoading(false)  // Atualiza o estado de carregamento para false após a requisição
+        setLoading(false);
       }
-    }
+    };
 
-    fetchData()
-  }, [])  // Array de dependências vazio, garantindo que a requisição seja feita apenas uma vez ao montar o componente
+    fetchData();
+    const intervalId = window.setInterval(fetchData, 5000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   if (loading) {
-    return <div>Carregando...</div>  // Exibe a mensagem de carregamento
+    return <div>Carregando...</div>;
   }
 
   if (error) {
-    return <div>{error}</div>  // Exibe a mensagem de erro, se houver
+    return <div>{error}</div>;
   }
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow">
-      <h3 className="text-lg font-semibold mb-4">Últimos Produtos Processados</h3>
+    <div className="rounded-lg bg-white p-4 shadow">
+      <h3 className="mb-4 text-lg font-semibold">Últimos produtos processados</h3>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>ID do produto_id</TableHead>
+            <TableHead>ID do produto</TableHead>
             <TableHead>Categoria</TableHead>
             <TableHead>Descrição</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Data e Hora</TableHead>
+            <TableHead>Data e hora</TableHead>
             <TableHead>Peso</TableHead>
             <TableHead>Altura</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {data.map((item, index) => (
-            <TableRow key={item.produto_id || index}> {/* Fallback para o índice caso o id seja indefinido */}
+            <TableRow key={`${item.produto_id}-${item.timestamp}-${index}`}>
               <TableCell>{item.produto_id}</TableCell>
               <TableCell>{item.categoria}</TableCell>
               <TableCell>{item.descricao}</TableCell>
@@ -81,10 +80,7 @@ export function DataTable() {
                   {item.status}
                 </Badge>
               </TableCell>
-              <TableCell>
-                {/* Formata a data no formato pt-BR */}
-                {new Date(item.timestamp).toLocaleString("pt-BR")}
-              </TableCell>
+              <TableCell>{new Date(item.timestamp).toLocaleString("pt-BR")}</TableCell>
               <TableCell>{item.peso}</TableCell>
               <TableCell>{item.altura}</TableCell>
             </TableRow>
@@ -92,5 +88,5 @@ export function DataTable() {
         </TableBody>
       </Table>
     </div>
-  )
+  );
 }

@@ -1,274 +1,353 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware  # Adiciona o CORSMiddleware
-from pydantic import BaseModel
-import serial
+from __future__ import annotations
+
 import json
+import logging
+import os
+import secrets
 import sqlite3
 import threading
-import time
-import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
-# Configuração do logging
-logging.basicConfig(level=logging.DEBUG,
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+import serial
+from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
-# Configuração do Arduino
-arduino_port = "/dev/cu.usbserial-120"  # Atualize conforme necessário
-baud_rate = 9600
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR.parent / ".env")
 
-# Variável global para a conexão serial
-arduino = None
-
-def init_serial():
-    global arduino
-    try:
-        if arduino is not None:
-            arduino.close()
-        
-        arduino = serial.Serial(arduino_port, baud_rate, timeout=1)
-        time.sleep(2)  # Aguarda a inicialização
-        logging.info("Conexão serial estabelecida com sucesso")
-        return True
-    except serial.SerialException as e:
-        logging.error(f"Erro ao inicializar conexão serial: {e}")
-        return False
-
-# Tenta estabelecer a conexão inicial
-init_serial()
-
-# Banco de dados SQLite
-conn = sqlite3.connect("pacotes.db", check_same_thread=False)
-cursor = conn.cursor()
-
-# Criação da tabela, se ainda não existir
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS pacotes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    produto_id TEXT,
-    categoria TEXT,
-    descricao TEXT,
-    peso REAL,
-    altura REAL,
-    status TEXT,
-    timestamp TEXT
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
-""")
-conn.commit()
 
-# FastAPI
-app = FastAPI()
 
-# Adiciona a configuração do CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Permite todos os domínios
-    allow_credentials=True,
-    allow_methods=["*"],  # Permite todos os métodos (GET, POST, etc.)
-    allow_headers=["*"],  # Permite todos os cabeçalhos
-)
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SERIAL_ENABLED = env_bool("SERIAL_ENABLED", False)
+ARDUINO_PORT = os.getenv("ARDUINO_PORT", "/dev/cu.usbserial-120")
+BAUD_RATE = int(os.getenv("BAUD_RATE", "9600"))
+DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "pacotes.db")))
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
+
+VALID_CATEGORIES = {"smartphones", "tablets"}
+
 
 class QRCodeData(BaseModel):
-    produto_id: str
-    categoria: str
-    descricao: str
-    peso: float
-    altura: float
+    produto_id: str = Field(min_length=1, max_length=100)
+    categoria: str = Field(min_length=1, max_length=100)
+    descricao: str = Field(min_length=1, max_length=500)
+    peso: float = Field(ge=0)
+    altura: float = Field(ge=0)
 
-def read_arduino():
-    global arduino
-    while True:
+
+class SerialController:
+    """Single owner of the USB serial connection used by the conveyor."""
+
+    def __init__(self) -> None:
+        self._connection: serial.Serial | None = None
+        self._lock = threading.Lock()
+
+    def connect(self) -> bool:
+        if not SERIAL_ENABLED:
+            return True
+
         try:
-            if arduino and arduino.in_waiting > 0:
-                dados = arduino.readline().decode('utf-8').strip()
-                logging.debug(f"Arduino response: {dados}")
-        except Exception as e:
-            logging.error(f"Erro na leitura serial: {e}")
-            # Tenta reinicializar a conexão
-            init_serial()
-        time.sleep(0.1)
+            if self._connection and self._connection.is_open:
+                return True
 
-# Inicia a thread de leitura
-thread = threading.Thread(target=read_arduino, daemon=True)
-thread.start()
+            self._connection = serial.Serial(
+                ARDUINO_PORT,
+                BAUD_RATE,
+                timeout=1,
+                write_timeout=1,
+            )
+            logging.info(
+                "Serial connected on %s at %s baud",
+                ARDUINO_PORT,
+                BAUD_RATE,
+            )
+            return True
+        except serial.SerialException as exc:
+            logging.error("Unable to open serial connection: %s", exc)
+            self.close()
+            return False
+
+    def send_package(
+        self,
+        *,
+        produto_id: str,
+        categoria: str,
+        status: str,
+    ) -> dict[str, Any]:
+        if not SERIAL_ENABLED:
+            return {"ok": True, "mode": "simulation"}
+
+        payload = {
+            "version": 1,
+            "command": "sort",
+            "produto_id": produto_id,
+            "categoria": categoria,
+            "status": status,
+        }
+
+        with self._lock:
+            if not self.connect() or self._connection is None:
+                raise serial.SerialException("serial connection unavailable")
+
+            try:
+                message = json.dumps(payload, ensure_ascii=False) + "\n"
+                self._connection.write(message.encode("utf-8"))
+                self._connection.flush()
+
+                ack_line = self._connection.readline().decode("utf-8").strip()
+                if not ack_line:
+                    logging.warning("Arduino did not return an ACK")
+                    return {"ok": True, "ack": None}
+
+                try:
+                    ack = json.loads(ack_line)
+                except json.JSONDecodeError:
+                    logging.warning("Invalid Arduino ACK: %s", ack_line)
+                    return {"ok": True, "ack": ack_line}
+
+                if ack.get("ok") is False:
+                    raise serial.SerialException(
+                        f"Arduino rejected command: {ack.get('error', 'unknown error')}"
+                    )
+                return ack
+            except (serial.SerialException, OSError):
+                self.close()
+                raise
+
+    def close(self) -> None:
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                logging.exception("Error closing serial connection")
+            finally:
+                self._connection = None
+
+
+serial_controller = SerialController()
+
+
+def get_connection() -> sqlite3.Connection:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db() -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pacotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                produto_id TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                descricao TEXT NOT NULL,
+                peso REAL NOT NULL,
+                altura REAL NOT NULL,
+                status TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+            """
+        )
+
+
+def require_write_key(x_api_key: str | None = Header(default=None)) -> None:
+    if not API_TOKEN:
+        return
+    if x_api_key is None or not secrets.compare_digest(x_api_key, API_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def package_status(category: str) -> str:
+    return "Válido" if category.strip().lower() in VALID_CATEGORIES else "Inválido"
+
+
+init_db()
+
+app = FastAPI(
+    title="Conveyor QR Automation API",
+    version="1.0.0",
+    description="Backend for QR validation, persistence and Arduino conveyor control.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+
+@app.get("/api/health")
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "database": str(DATABASE_PATH),
+        "serial_enabled": SERIAL_ENABLED,
+    }
+
 
 @app.post("/produto")
-async def processar_qr_code(data: QRCodeData):
-    global arduino
-    
+async def processar_qr_code(
+    data: QRCodeData,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    require_write_key(x_api_key)
+
+    status = package_status(data.categoria)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     try:
-        # Verifica se a conexão serial está ativa
-        if arduino is None or not arduino.is_open:
-            if not init_serial():
-                raise HTTPException(status_code=503, 
-                                  detail="Conexão serial não disponível")
-
-        # Agora o status depende apenas da categoria
-        if data.categoria.lower() in ["smartphones", "tablets"]:
-            status = "Válido"
-        else:
-            status = "Inválido"
-
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        # Salva no banco
-        cursor.execute(
-            "INSERT INTO pacotes (produto_id, categoria, descricao, peso, altura, status, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (data.produto_id, data.categoria, data.descricao, data.peso, data.altura, status, timestamp)
+        serial_ack = serial_controller.send_package(
+            produto_id=data.produto_id,
+            categoria=data.categoria.strip().lower(),
+            status=status,
         )
-        conn.commit()
+    except serial.SerialException as exc:
+        logging.error("Serial communication failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Hardware controller unavailable",
+        ) from exc
 
-        # Prepara mensagem para o Arduino
-        mensagem_arduino = {
-            "categoria": data.categoria,
-            "status": status
-        }
-        
-        # Envia para o Arduino com logging
-        msg_string = json.dumps(mensagem_arduino) + "\n"
-        logging.debug(f"Enviando para Arduino: {msg_string}")
-        
-        arduino.write(msg_string.encode())
-        arduino.flush()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO pacotes
+                (produto_id, categoria, descricao, peso, altura, status, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.produto_id,
+                data.categoria,
+                data.descricao,
+                data.peso,
+                data.altura,
+                status,
+                timestamp,
+            ),
+        )
 
-        return {
-            "status": status,
-            "message": "Pacote processado",
-            "timestamp": timestamp
-        }
+    return {
+        "status": status,
+        "message": "Pacote processado",
+        "timestamp": timestamp,
+        "serial": serial_ack,
+    }
 
-    except serial.SerialException as e:
-        logging.error(f"Erro na comunicação serial: {e}")
-        raise HTTPException(status_code=503, 
-                          detail="Erro na comunicação com o Arduino")
-    except Exception as e:
-        logging.error(f"Erro no processamento: {e}")
-        raise HTTPException(status_code=500, 
-                          detail=str(e))
 
 @app.get("/api/status")
-async def get_status():
-    cursor.execute("SELECT status, COUNT(*) as count FROM pacotes GROUP BY status")
-    rows = cursor.fetchall()
-    return [{"name": row[0], "value": row[1]} for row in rows]
+async def get_status() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM pacotes GROUP BY status"
+        ).fetchall()
+    return [{"name": row["status"], "value": row["count"]} for row in rows]
+
 
 @app.get("/api/ultimos_produtos")
-async def get_ultimos_produtos():
-    # Consulta os 2 últimos produtos processados com base no ID
-    cursor.execute("""
-        SELECT produto_id, categoria, descricao, peso, altura, status, timestamp 
-        FROM pacotes 
-        ORDER BY id DESC 
-        LIMIT 2
-    """)
-    rows = cursor.fetchall()
+async def get_ultimos_produtos() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT produto_id, categoria, descricao, peso, altura, status, timestamp
+            FROM pacotes
+            ORDER BY id DESC
+            LIMIT 10
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
-    # Se necessário, podemos adicionar um log para inspeção
-    logging.debug(f"Últimos produtos processados: {rows}")
-
-    return [
-        {
-            "produto_id": row[0],
-            "categoria": row[1],
-            "descricao": row[2],
-            "peso": row[3],
-            "altura": row[4],
-            "status": row[5],
-            "timestamp": row[6]
-        }
-        for row in rows
-    ]
 
 @app.get("/api/total_itens")
-async def get_total_itens():
-    cursor.execute("SELECT COUNT(*) FROM pacotes")
-    total_itens = cursor.fetchone()[0]
-    return {"total_itens": total_itens}
+async def get_total_itens() -> dict[str, int]:
+    with get_connection() as connection:
+        total = connection.execute("SELECT COUNT(*) FROM pacotes").fetchone()[0]
+    return {"total_itens": total}
+
 
 @app.get("/api/total_validos")
-async def get_total_validos():
-    cursor.execute("SELECT COUNT(*) FROM pacotes WHERE status = 'Válido'")
-    total_validos = cursor.fetchone()[0]
-    return {"total_validos": total_validos}
+async def get_total_validos() -> dict[str, int]:
+    with get_connection() as connection:
+        total = connection.execute(
+            "SELECT COUNT(*) FROM pacotes WHERE status = 'Válido'"
+        ).fetchone()[0]
+    return {"total_validos": total}
+
 
 @app.get("/api/total_invalidos")
-async def get_total_invalidos():
-    cursor.execute("SELECT COUNT(*) FROM pacotes WHERE status = 'Inválido'")
-    total_invalidos = cursor.fetchone()[0]
-    return {"total_invalidos": total_invalidos}
+async def get_total_invalidos() -> dict[str, int]:
+    with get_connection() as connection:
+        total = connection.execute(
+            "SELECT COUNT(*) FROM pacotes WHERE status = 'Inválido'"
+        ).fetchone()[0]
+    return {"total_invalidos": total}
 
-@app.get("/api/tempo_medio_analise")
-async def get_tempo_medio_analise():
-    try:
-        # Calcula a diferença entre o timestamp e o momento atual
-        cursor.execute("""
-            SELECT strftime('%s', 'now') - strftime('%s', timestamp) 
-            FROM pacotes
-        """)
-        tempos = cursor.fetchall()
-
-        if not tempos:
-            raise HTTPException(status_code=404, detail="Nenhum pacote encontrado para calcular o tempo")
-
-        # Calcula o tempo médio
-        total_tempos = sum([tempo[0] for tempo in tempos])
-        media_tempo = total_tempos / len(tempos)
-
-        # Convertendo para segundos, minutos ou outro formato, se necessário
-        minutos = media_tempo / 60  # Convertendo para minutos
-
-        return {"tempo_medio_analise": round(minutos, 2)}
-
-    except Exception as e:
-        logging.error(f"Erro ao calcular o tempo médio de análise: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao calcular o tempo médio de análise")
 
 @app.get("/api/taxa_sucesso")
-async def get_taxa_sucesso():
-    try:
-        # Consulta o total de pacotes válidos
-        cursor.execute("SELECT COUNT(*) FROM pacotes WHERE status = 'Válido'")
-        total_validos = cursor.fetchone()[0]
+async def get_taxa_sucesso() -> dict[str, float]:
+    with get_connection() as connection:
+        total = connection.execute("SELECT COUNT(*) FROM pacotes").fetchone()[0]
+        validos = connection.execute(
+            "SELECT COUNT(*) FROM pacotes WHERE status = 'Válido'"
+        ).fetchone()[0]
 
-        # Consulta o total de pacotes processados
-        cursor.execute("SELECT COUNT(*) FROM pacotes")
-        total_pacotes = cursor.fetchone()[0]
-
-        # Evita divisão por zero
-        if total_pacotes == 0:
-            raise HTTPException(status_code=404, detail="Nenhum pacote encontrado para calcular a taxa de sucesso")
-
-        # Calcula a taxa de sucesso (percentual de pacotes válidos)
-        taxa_sucesso = (total_validos / total_pacotes) * 100
-
-        # Retorna a taxa de sucesso com 2 casas decimais
-        return {"taxa_sucesso": round(taxa_sucesso, 2)}
-
-    except Exception as e:
-        logging.error(f"Erro ao calcular a taxa de sucesso: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao calcular a taxa de sucesso")
+    taxa = 0.0 if total == 0 else (validos / total) * 100
+    return {"taxa_sucesso": round(taxa, 2)}
 
 
 @app.get("/api/categories")
-async def get_categories():
-    cursor.execute("SELECT categoria, COUNT(*) as quantidade FROM pacotes GROUP BY categoria")
-    rows = cursor.fetchall()
-    return [{"name": row[0], "quantidade": row[1]} for row in rows]
+async def get_categories() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT categoria, COUNT(*) AS quantidade
+            FROM pacotes
+            GROUP BY categoria
+            ORDER BY quantidade DESC
+            """
+        ).fetchall()
+    return [{"name": row["categoria"], "quantidade": row["quantidade"]} for row in rows]
+
 
 @app.get("/api/time")
-async def get_time_data():
-    cursor.execute("""
-        SELECT strftime('%H:00', timestamp) as hour, COUNT(*) as produtos
-        FROM pacotes
-        GROUP BY strftime('%H:00', timestamp)
-        ORDER BY hour
-    """)
-    rows = cursor.fetchall()
-    return [{"name": row[0], "produtos": row[1]} for row in rows]
+async def get_time_data() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT strftime('%H:00', timestamp) AS hour, COUNT(*) AS produtos
+            FROM pacotes
+            GROUP BY strftime('%H:00', timestamp)
+            ORDER BY hour
+            """
+        ).fetchall()
+    return [{"name": row["hour"], "produtos": row["produtos"]} for row in rows]
+
 
 @app.on_event("shutdown")
-async def shutdown_event():
-    global arduino
-    if arduino:
-        arduino.close()
-    conn.close()
+async def shutdown_event() -> None:
+    serial_controller.close()
