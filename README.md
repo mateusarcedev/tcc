@@ -88,6 +88,24 @@ The script refuses to send packages if hardware mode is enabled unless `--allow-
 
 Full walkthrough: [docs/software-demo.md](docs/software-demo.md)
 
+## One-command Docker demo
+
+If Docker is available, the fastest way to run the software stack is:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:3000`.
+
+To run the same verified API flow used by CI:
+
+```bash
+docker compose --profile tools run --rm demo
+```
+
+Docker keeps Arduino/USB access disabled by default. Full details: [docs/docker-demo.md](docs/docker-demo.md).
+
 ## Quick start — software demo without hardware
 
 The default configuration uses **simulation mode**, so the backend and dashboard can be demonstrated without an Arduino connected.

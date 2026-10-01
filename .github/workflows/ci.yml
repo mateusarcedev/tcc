@@ -123,3 +123,48 @@ jobs:
 
       - name: Compile reference target
         run: arduino-cli compile --warnings all --fqbn arduino:avr:uno Arduino/esteira
+
+
+  containers:
+    name: Container smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Compose configuration
+        run: docker compose config
+
+      - name: Build demo images
+        run: docker compose build
+
+      - name: Start API and dashboard
+        run: docker compose up -d api dashboard
+
+      - name: Wait for services
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null \
+              && curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 30 ]; then
+              docker compose ps
+              docker compose logs
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+      - name: Run containerized integration demo
+        run: docker compose --profile tools run --rm demo
+
+      - name: Show service status
+        run: docker compose ps
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

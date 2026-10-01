@@ -1,0 +1,71 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: tcc-conveyor-api:local
+    environment:
+      SERIAL_ENABLED: "false"
+      DATABASE_PATH: /data/pacotes.db
+      CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - api-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://127.0.0.1:8000/api/health', timeout=2).raise_for_status()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    image: tcc-conveyor-dashboard:local
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  demo:
+    image: tcc-conveyor-api:local
+    depends_on:
+      api:
+        condition: service_healthy
+    command:
+      [
+        "python",
+        "scripts/demo_api.py",
+        "--verify",
+        "--base-url",
+        "http://api:8000",
+      ]
+    profiles:
+      - tools
+
+volumes:
+  api-data:
