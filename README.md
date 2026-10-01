@@ -128,7 +128,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-> Before public deployment, regenerate the dashboard lockfile with the patched dependency set and run the security/build checks documented below.
+> The dashboard dependency tree is committed in `package-lock.json`; CI verifies a clean `npm ci`, runtime audit, lint and production build.
 
 ## Camera client
 
