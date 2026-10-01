@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 
-from api import get_connection, init_db
+from api.api import get_connection, init_db
 
 DEMO_PACKAGES = [
     ("DEMO-001", "smartphones", "Smartphone de demonstração", 0.45, 15.0, "Válido"),
@@ -14,7 +14,9 @@ DEMO_PACKAGES = [
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Populate the local SQLite DB with sanitized demo data.")
+    parser = argparse.ArgumentParser(
+        description="Populate the local SQLite DB with sanitized demo data."
+    )
     parser.add_argument(
         "--reset",
         action="store_true",
