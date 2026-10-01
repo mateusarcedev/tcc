@@ -68,6 +68,26 @@ More detail: [docs/architecture.md](docs/architecture.md)
 └── SECURITY.md           # Security and deployment guidance
 ```
 
+## Try it without hardware
+
+The repository includes an executable software-only demo that exercises the real FastAPI service and SQLite persistence without opening the Arduino serial port.
+
+Start the API:
+
+```bash
+uvicorn api.api:app --host 127.0.0.1 --port 8000
+```
+
+Then, in another terminal:
+
+```bash
+python scripts/demo_api.py --verify
+```
+
+The script refuses to send packages if hardware mode is enabled unless `--allow-hardware` is explicitly supplied. A successful run proves the expected `+3 total / +2 valid / +1 invalid` state transition.
+
+Full walkthrough: [docs/software-demo.md](docs/software-demo.md)
+
 ## Quick start — software demo without hardware
 
 The default configuration uses **simulation mode**, so the backend and dashboard can be demonstrated without an Arduino connected.
@@ -245,12 +265,15 @@ git ls-files | grep -E '(^|/)\.DS_Store$|__pycache__|\.pyc$|\.log$|\.db$'
 
 The command should return no tracked runtime artifacts.
 
-Python:
+Python + integration demo:
 
 ```bash
-python -m compileall api camera
+python -m compileall api camera scripts
 pip check
+python scripts/demo_api.py --verify
 ```
+
+GitHub Actions runs the demo against a real local `uvicorn` process and a temporary SQLite database.
 
 Dashboard:
 
