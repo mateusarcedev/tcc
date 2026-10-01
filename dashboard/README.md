@@ -15,7 +15,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
