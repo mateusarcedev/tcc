@@ -41,7 +41,7 @@ jobs:
         run: python -m pip check
 
   dashboard:
-    name: Dashboard build and audit
+    name: Dashboard checks
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,22 +55,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
 
-      - name: Install dashboard dependencies
-        run: npm install
+      - name: Install locked dependencies
+        run: npm ci
 
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint dashboard
+        run: npm run lint
 
       - name: Build dashboard
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
         run: npm run build
-
-      - name: Upload generated lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: dashboard-package-lock
-          path: dashboard/package-lock.json
-          if-no-files-found: error
-          retention-days: 1
