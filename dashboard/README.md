@@ -40,4 +40,4 @@ The dashboard uses:
 - `GET /api/time`
 - `GET /api/ultimos_produtos`
 
-Do not deploy an outdated Next.js lockfile. Before public deployment, install the current patched dependency set and run `npm audit --omit=dev` and `npm run build`.
+The committed lockfile pins the tested dependency tree. CI runs `npm ci`, `npm audit --omit=dev --audit-level=high`, `npm run lint` and `npm run build`.
