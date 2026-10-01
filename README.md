@@ -1,20 +1,71 @@
 # Conveyor QR Automation System
 
-End-to-end academic automation project that combines **computer vision, FastAPI, SQLite, USB serial communication, Arduino actuators and a Next.js monitoring dashboard** to inspect and route packages from QR-code data.
+[![CI](https://github.com/mateusarcedev/tcc/actions/workflows/ci.yml/badge.svg)](https://github.com/mateusarcedev/tcc/actions/workflows/ci.yml)
+
+An end-to-end **computer vision + backend + embedded systems** project that reads package QR codes, validates and stores processing events, sends routing commands to an Arduino conveyor, and exposes live metrics in a Next.js dashboard.
 
 > Computer Engineering final project — FAMETRO, Manaus, Brazil.
 
+## 30-second tour
+
+```text
+QR package
+   ↓
+OpenCV + pyzbar
+   ↓
+FastAPI
+   ├── validates category
+   ├── persists event in SQLite
+   └── sends JSON command over USB serial
+                     ↓
+                  Arduino
+                     ↓
+          motor + routing servos + LCD
+
+Next.js dashboard ← metrics API
+```
+
+The project can be demonstrated **without physical hardware** using simulation mode and Docker Compose.
+
+```bash
+docker compose up --build
+```
+
+Open:
+
+- Dashboard: `http://localhost:3000`
+- API docs: `http://localhost:8000/docs`
+
+Then run the same verified integration flow used by CI:
+
+```bash
+docker compose --profile tools run --rm demo
+```
+
+Expected result:
+
+```text
++3 processed
++2 valid
++1 invalid
+
+VERIFY PASSED: API demo produced the expected state transitions.
+```
+
 ## What this project demonstrates
 
-This repository is intended to show more than a CRUD application. It connects software to physical hardware:
+| Capability | Implementation |
+| --- | --- |
+| Computer vision | OpenCV camera capture + pyzbar QR decoding |
+| Backend orchestration | FastAPI + Pydantic validation |
+| Persistence | SQLite processing history and aggregate queries |
+| Hardware integration | Versioned JSON over USB serial with ACK/NACK |
+| Embedded control | Arduino motor, two routing servos and 16x2 I2C LCD |
+| Frontend | Next.js + React + Recharts monitoring dashboard |
+| Reproducibility | Docker Compose software demo |
+| Quality gates | Python tests, HTTP integration test, dashboard audit/lint/build, firmware compile and container smoke test in CI |
 
-1. a camera captures and decodes a QR code;
-2. the camera client sends the package payload to FastAPI;
-3. the backend validates the category and stores the event in SQLite;
-4. the backend sends a versioned JSON command over USB serial;
-5. Arduino controls the conveyor routing servo and LCD;
-6. Arduino returns an ACK;
-7. the Next.js dashboard reads processing metrics from the API.
+This is intentionally more than a CRUD demo: the backend is the coordination point between **camera input, persistence, physical actuation and monitoring**.
 
 ## Architecture
 
@@ -33,86 +84,37 @@ flowchart LR
     API --> DB
     API -->|JSON / USB Serial| MCU
     MCU --> HW
-    MCU -->|ACK| API
+    MCU -->|ACK / NACK| API
     WEB -->|GET /api/*| API
 ```
 
-The API is deliberately the **single owner of the serial port**. This avoids duplicate commands and port contention between the camera process and the backend.
+The API is the **single owner of the serial port**, avoiding duplicated hardware commands and serial-port contention.
 
-More detail: [docs/architecture.md](docs/architecture.md)
+Detailed architecture: [docs/architecture.md](docs/architecture.md)
 
-## Components
+## Demo options
 
-| Area | Technology | Responsibility |
+| Mode | Hardware required | Best use |
 | --- | --- | --- |
-| Vision | Python, OpenCV, pyzbar | Capture frames and decode QR payloads |
-| Backend | Python, FastAPI, Pydantic | Validation, orchestration and metrics API |
-| Persistence | SQLite | Local processing history |
-| Hardware bridge | PySerial | USB serial transport |
-| Firmware | Arduino, ArduinoJson | Conveyor motor, servos and LCD |
-| Web dashboard | Next.js, React, Recharts | Live metrics and recent package history |
-| Mobile prototype | React Native, Expo | Earlier UI prototype kept for project history |
+| Docker Compose | No | Fastest portfolio/reviewer setup |
+| Native simulation | No | Backend/dashboard development |
+| Camera + simulation | Camera only | QR decoding demonstration |
+| Full hardware | Arduino + conveyor + camera | Physical end-to-end demonstration |
 
-## Repository structure
-
-```text
-.
-├── api/                  # FastAPI backend, dependencies and demo seed
-├── camera/               # QR camera client
-├── Arduino/
-│   └── esteira/          # Active conveyor firmware
-├── dashboard/            # Integrated Next.js dashboard
-├── app/                  # Earlier React Native UI prototype
-├── docs/                 # Architecture, protocol and demo guidance
-├── .env.example          # Local configuration template
-└── SECURITY.md           # Security and deployment guidance
-```
-
-## Try it without hardware
-
-The repository includes an executable software-only demo that exercises the real FastAPI service and SQLite persistence without opening the Arduino serial port.
-
-Start the API:
-
-```bash
-uvicorn api.api:app --host 127.0.0.1 --port 8000
-```
-
-Then, in another terminal:
-
-```bash
-python scripts/demo_api.py --verify
-```
-
-The script refuses to send packages if hardware mode is enabled unless `--allow-hardware` is explicitly supplied. A successful run proves the expected `+3 total / +2 valid / +1 invalid` state transition.
-
-Full walkthrough: [docs/software-demo.md](docs/software-demo.md)
-
-## One-command Docker demo
-
-If Docker is available, the fastest way to run the software stack is:
+### Docker demo
 
 ```bash
 docker compose up --build
-```
-
-Then open `http://localhost:3000`.
-
-To run the same verified API flow used by CI:
-
-```bash
 docker compose --profile tools run --rm demo
 ```
 
-Docker keeps Arduino/USB access disabled by default. Full details: [docs/docker-demo.md](docs/docker-demo.md).
+Docker explicitly keeps `SERIAL_ENABLED=false`; no USB device is exposed to the stack.
 
-## Quick start — software demo without hardware
+Guide: [docs/docker-demo.md](docs/docker-demo.md)
 
-The default configuration uses **simulation mode**, so the backend and dashboard can be demonstrated without an Arduino connected.
+### Native software demo
 
-### 1. Python environment
-
-macOS / Linux:
+Create the Python environment:
 
 ```bash
 python3 -m venv .venv
@@ -130,47 +132,25 @@ pip install -r api/requirements.txt
 Copy-Item .env.example .env
 ```
 
-### 2. Seed sanitized demonstration data
-
-```bash
-python -m api.seed_demo --reset
-```
-
-The generated `api/pacotes.db` is runtime data and is intentionally ignored by Git.
-
-### 3. Start the API
+Start the API:
 
 ```bash
 uvicorn api.api:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Health check:
-
-```text
-GET http://127.0.0.1:8000/api/health
-```
-
-Interactive API documentation:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### 4. Start the dashboard
+Run the verification demo in another terminal:
 
 ```bash
-cd dashboard
-npm ci
-npm run dev
+python scripts/demo_api.py --verify
 ```
 
-Open `http://localhost:3000`.
+The script refuses to send package commands when hardware mode is enabled unless `--allow-hardware` is explicitly supplied.
 
-> The dashboard dependency tree is committed in `package-lock.json`; CI verifies a clean `npm ci`, runtime audit, lint and production build.
+Guide: [docs/software-demo.md](docs/software-demo.md)
 
-## Camera client
+## QR payload
 
-The camera client expects QR codes whose payload is JSON:
+The camera client expects JSON inside the QR code:
 
 ```json
 {
@@ -182,19 +162,26 @@ The camera client expects QR codes whose payload is JSON:
 }
 ```
 
-Run:
+Supported routing categories:
+
+- `smartphones`
+- `tablets`
+
+Other categories are stored as `Inválido`.
+
+Run the camera client:
 
 ```bash
 python camera/main.py
 ```
 
-`pyzbar` requires the native **zbar** library on the operating system.
+The camera only decodes QR data and calls the API. It does **not** own the Arduino serial connection.
 
-The camera does **not** talk directly to Arduino. It sends the decoded payload to the API, which owns validation, persistence and hardware control.
+> `pyzbar` requires the native `zbar` library on the operating system.
 
 ## Hardware mode
 
-Set in `.env`:
+Configure `.env`:
 
 ```dotenv
 SERIAL_ENABLED=true
@@ -202,7 +189,7 @@ ARDUINO_PORT=/dev/cu.usbserial-120
 BAUD_RATE=9600
 ```
 
-On Windows, `ARDUINO_PORT` will usually look like `COM3` or another COM port.
+On Windows, the serial port will typically be a COM port such as `COM3`.
 
 The active firmware is:
 
@@ -210,121 +197,119 @@ The active firmware is:
 Arduino/esteira/esteira.ino
 ```
 
-Arduino dependencies and the reproducible reference build are documented in [Arduino/README.md](Arduino/README.md). The reconstructed BOM/wiring and the hardware details that could not be recovered are in [docs/hardware.md](docs/hardware.md).
+Known control interfaces:
 
-## Serial protocol
+| Component | Configuration |
+| --- | --- |
+| Servo 1 | pin 12 |
+| Servo 2 | pin 13 |
+| Conveyor motor control | PWM pin 6 |
+| LCD | I2C `0x27`, 16x2 |
+| Serial | 9600 baud |
 
-Commands use one UTF-8 JSON document per line at **9600 baud**.
+The exact original Arduino board model was not preserved in the historical repository. CI compiles against `arduino:avr:uno` only as a **reference compatibility target**, not as a claim about the original hardware.
 
-Example command:
+Hardware reconstruction: [docs/hardware.md](docs/hardware.md)  
+Firmware setup: [Arduino/README.md](Arduino/README.md)  
+Serial contract: [docs/serial-protocol.md](docs/serial-protocol.md)
 
-```json
-{
-  "version": 1,
-  "command": "sort",
-  "produto_id": "DEMO-001",
-  "categoria": "smartphones",
-  "status": "Válido"
-}
-```
-
-Example ACK:
-
-```json
-{
-  "ok": true,
-  "produto_id": "DEMO-001"
-}
-```
-
-Full contract: [docs/serial-protocol.md](docs/serial-protocol.md)
-
-## API endpoints
+## API
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/api/health` | Runtime health/config status |
-| POST | `/produto` | Validate, persist and optionally route one package |
+| GET | `/api/health` | Runtime database + serial mode health |
+| POST | `/produto` | Validate, persist and optionally route a package |
 | GET | `/api/status` | Valid/invalid totals |
-| GET | `/api/ultimos_produtos` | Recent package history |
+| GET | `/api/ultimos_produtos` | Recent processing history |
 | GET | `/api/total_itens` | Total processed |
 | GET | `/api/total_validos` | Total valid |
 | GET | `/api/total_invalidos` | Total invalid |
-| GET | `/api/taxa_sucesso` | Percentage of accepted categories |
+| GET | `/api/taxa_sucesso` | Valid percentage |
 | GET | `/api/categories` | Counts by category |
 | GET | `/api/time` | Counts grouped by hour |
 
-## Security posture
+Interactive OpenAPI documentation is available at `/docs` while the API is running.
 
-Runtime databases, logs, environment files, Python bytecode, build output and OS metadata are ignored by Git.
+## Repository structure
 
-`POST /produto` can trigger physical movement when hardware mode is enabled. For any deployment beyond the local machine:
+```text
+.
+├── api/                  # FastAPI backend, SQLite and tests
+├── camera/               # OpenCV/pyzbar QR client
+├── Arduino/
+│   └── esteira/          # Conveyor firmware
+├── dashboard/            # Next.js monitoring dashboard
+├── scripts/              # Executable integration demo
+├── docs/                 # Architecture, hardware and demo docs
+├── app/                  # Earlier React Native prototype
+├── docker-compose.yml    # Reproducible software demo
+├── .env.example          # Local configuration
+└── SECURITY.md           # Security guidance
+```
+
+## Continuous integration
+
+The `CI` workflow validates four independent areas on every pull request:
+
+1. **Python**
+   - dependency installation
+   - source compilation
+   - unit tests
+   - dependency consistency
+   - real `uvicorn + HTTP + SQLite` integration demo
+
+2. **Dashboard**
+   - reproducible `npm ci`
+   - runtime dependency audit
+   - ESLint
+   - production Next.js build
+
+3. **Firmware**
+   - Arduino CLI setup
+   - pinned firmware libraries
+   - AVR reference compilation
+
+4. **Containers**
+   - Compose config validation
+   - API/dashboard image builds
+   - service health checks
+   - container-to-container demo verification
+   - clean teardown
+
+## Security
+
+Runtime databases, logs, environment files, Python bytecode, build output and OS metadata are excluded from version control.
+
+`POST /produto` can trigger physical movement when hardware mode is enabled. For use beyond localhost:
 
 - set a strong `API_TOKEN`;
 - restrict `CORS_ORIGINS`;
-- serve behind HTTPS;
-- apply network access control and appropriate rate limiting.
+- terminate traffic with HTTPS;
+- apply network access control and rate limiting.
 
 See [SECURITY.md](SECURITY.md).
 
-## Demonstration media
+## Visual demo status
 
-A short GIF showing **QR read → API → conveyor routing → dashboard update** will be the primary visual demo for the portfolio.
+The software path is fully reproducible and continuously verified in CI.
 
-The capture plan is documented in [docs/demo-guide.md](docs/demo-guide.md). Raw large videos should not be committed directly to Git history.
+The remaining portfolio asset is a short recording of the **physical conveyor** showing:
 
-## Verification
-
-Repository hygiene:
-
-```bash
-git ls-files | grep -E '(^|/)\.DS_Store$|__pycache__|\.pyc$|\.log$|\.db$'
+```text
+QR read → API processing → Arduino command → servo routing → dashboard update
 ```
 
-The command should return no tracked runtime artifacts.
+The repository intentionally does not fake this media. The capture plan and target filenames are documented in [docs/demo-guide.md](docs/demo-guide.md) and [docs/media/README.md](docs/media/README.md).
 
-Python + integration demo:
-
-```bash
-python -m compileall api camera scripts
-pip check
-python scripts/demo_api.py --verify
-```
-
-GitHub Actions runs the demo against a real local `uvicorn` process and a temporary SQLite database.
-
-Dashboard:
-
-```bash
-cd dashboard
-npm audit --omit=dev
-npm run build
-```
-
-Firmware reference build (compatibility target, not a claim about the original board):
-
-```bash
-arduino-cli core update-index
-arduino-cli core install arduino:avr
-arduino-cli lib install "ArduinoJson@7.4.3"
-arduino-cli lib install "LiquidCrystal I2C@1.1.2"
-arduino-cli lib install "Servo@1.3.0"
-arduino-cli compile --warnings all --fqbn arduino:avr:uno Arduino/esteira
-```
-
-CI runs this reference build automatically. The original Arduino board model is still marked as not recovered from the historical repository.
-
-## Academic context and authorship
+## Academic context
 
 Developed as a Computer Engineering final project at **Faculdade Metropolitana de Manaus (FAMETRO)**.
 
-Project authors:
+Authors:
 
 - Mateus Arce
 - Tiago Henrique
 
-## Project status
-
-The repository has been reorganized for portfolio use while preserving the original project history. The React Native application under `app/` is retained as an earlier prototype; the Next.js dashboard is the primary integrated monitoring interface.
+The React Native application under `app/` is preserved as an earlier prototype. The Next.js dashboard is the primary integrated monitoring interface.
 
 No open-source license has been selected yet.
