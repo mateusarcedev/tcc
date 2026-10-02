@@ -118,19 +118,27 @@ class SerialController:
 
                 ack_line = self._connection.readline().decode("utf-8").strip()
                 if not ack_line:
-                    logging.warning("Arduino did not return an ACK")
-                    return {"ok": True, "ack": None}
+                    raise serial.SerialException("Arduino ACK timeout")
 
                 try:
                     ack = json.loads(ack_line)
-                except json.JSONDecodeError:
-                    logging.warning("Invalid Arduino ACK: %s", ack_line)
-                    return {"ok": True, "ack": ack_line}
+                except json.JSONDecodeError as exc:
+                    raise serial.SerialException("invalid Arduino ACK JSON") from exc
 
-                if ack.get("ok") is False:
+                if not isinstance(ack, dict):
+                    raise serial.SerialException("invalid Arduino ACK payload")
+
+                if ack.get("ok") is not True:
                     raise serial.SerialException(
                         f"Arduino rejected command: {ack.get('error', 'unknown error')}"
                     )
+
+                ack_product_id = ack.get("produto_id")
+                if ack_product_id != produto_id:
+                    raise serial.SerialException(
+                        "Arduino ACK produto_id does not match command"
+                    )
+
                 return ack
             except (serial.SerialException, OSError):
                 self.close()
