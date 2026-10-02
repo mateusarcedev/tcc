@@ -99,3 +99,15 @@ GitHub Actions runs the same software demo against a real `uvicorn` process with
 - the same FastAPI application used locally.
 
 This makes the portfolio demo continuously executable even when the physical prototype is not connected.
+
+
+## Idempotent package processing
+
+`POST /produto` uses `produto_id` as the package idempotency key.
+
+- The first request validates the package, sends the command to the hardware when enabled, waits for a correlated ACK, and persists the result.
+- Replaying the same `produto_id` with the same package data returns the original status and timestamp with `"duplicate": true`. It does **not** send another hardware command and does not create another database row.
+- Reusing an existing `produto_id` with different package data returns HTTP `409 Conflict`.
+- The duplicate check, hardware command, and persistence are serialized in-process so concurrent retries cannot both actuate the conveyor.
+
+The executable demo deliberately replays its first package and verifies that counters still increase only by the three unique demo packages.
