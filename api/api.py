@@ -251,69 +251,69 @@ def processar_qr_code(
         with get_connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
 
-                existing = connection.execute(
-                    """
-                    SELECT produto_id, categoria, descricao, peso, altura, status, timestamp
-                    FROM pacotes
-                    WHERE produto_id = ?
-                    ORDER BY id ASC
-                    LIMIT 1
-                    """,
-                    (data.produto_id,),
-                ).fetchone()
+            existing = connection.execute(
+                """
+                SELECT produto_id, categoria, descricao, peso, altura, status, timestamp
+                FROM pacotes
+                WHERE produto_id = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (data.produto_id,),
+            ).fetchone()
 
-                if existing is not None:
-                    same_payload = (
-                        existing["categoria"].strip().lower() == normalized_category
-                        and existing["descricao"] == data.descricao
-                        and float(existing["peso"]) == data.peso
-                        and float(existing["altura"]) == data.altura
-                    )
-                    if not same_payload:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="produto_id already exists with different package data",
-                        )
-
-                    return {
-                        "status": existing["status"],
-                        "message": "Pacote já processado",
-                        "timestamp": existing["timestamp"],
-                        "duplicate": True,
-                        "serial": {"ok": True, "mode": "idempotent_replay"},
-                    }
-
-                timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-                try:
-                    serial_ack = serial_controller.send_package(
-                        produto_id=data.produto_id,
-                        categoria=normalized_category,
-                        status=status,
-                    )
-                except serial.SerialException as exc:
-                    logging.error("Serial communication failed: %s", exc)
-                    raise HTTPException(
-                        status_code=503,
-                        detail="Hardware controller unavailable",
-                    ) from exc
-
-                connection.execute(
-                    """
-                    INSERT INTO pacotes
-                        (produto_id, categoria, descricao, peso, altura, status, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        data.produto_id,
-                        normalized_category,
-                        data.descricao,
-                        data.peso,
-                        data.altura,
-                        status,
-                        timestamp,
-                    ),
+            if existing is not None:
+                same_payload = (
+                    existing["categoria"].strip().lower() == normalized_category
+                    and existing["descricao"] == data.descricao
+                    and float(existing["peso"]) == data.peso
+                    and float(existing["altura"]) == data.altura
                 )
+                if not same_payload:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="produto_id already exists with different package data",
+                    )
+
+                return {
+                    "status": existing["status"],
+                    "message": "Pacote já processado",
+                    "timestamp": existing["timestamp"],
+                    "duplicate": True,
+                    "serial": {"ok": True, "mode": "idempotent_replay"},
+                }
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            try:
+                serial_ack = serial_controller.send_package(
+                    produto_id=data.produto_id,
+                    categoria=normalized_category,
+                    status=status,
+                )
+            except serial.SerialException as exc:
+                logging.error("Serial communication failed: %s", exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Hardware controller unavailable",
+                ) from exc
+
+            connection.execute(
+                """
+                INSERT INTO pacotes
+                    (produto_id, categoria, descricao, peso, altura, status, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data.produto_id,
+                    normalized_category,
+                    data.descricao,
+                    data.peso,
+                    data.altura,
+                    status,
+                    timestamp,
+                ),
+            )
     except sqlite3.OperationalError as exc:
         logging.error("Database transaction failed: %s", exc)
         raise HTTPException(
