@@ -20,11 +20,13 @@ to generate sanitized demonstration records locally.
 
 `POST /produto` can result in a physical actuator command when `SERIAL_ENABLED=true`.
 
-For local demos, keep the API bound to loopback.
+For local simulation demos, keep the API bound to loopback. Authentication may remain disabled only while `SERIAL_ENABLED=false`.
+
+When `SERIAL_ENABLED=true`, `API_TOKEN` is mandatory. If it is missing, `POST /produto` fails closed with HTTP 503 before any serial command can be sent. Clients must send the configured token in the `X-API-Key` header.
 
 If the service is exposed beyond the local machine:
 
-- set `API_TOKEN` and send it in the `X-API-Key` header;
+- configure a strong `API_TOKEN` and send it in the `X-API-Key` header;
 - restrict `CORS_ORIGINS`;
 - use HTTPS;
 - apply network access control and rate limiting appropriate to the deployment.
