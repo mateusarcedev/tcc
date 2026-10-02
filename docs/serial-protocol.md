@@ -88,6 +88,14 @@ The API treats a package as hardware-confirmed only when it receives a newline-d
 
 A timeout, malformed response, NACK or mismatched `produto_id` is treated as a hardware communication failure. In that case the API returns HTTP 503 and does not persist the package as successfully processed.
 
+### ACK timing
+
+The current firmware sends the success ACK **after** the routing action finishes. A normal route holds the selected servo in its routing position for about 2 seconds before returning it home, so the backend read timeout must be longer than that physical action.
+
+The default `SERIAL_ACK_TIMEOUT_SECONDS=5` provides headroom over the current ~2 second route. It is configurable because a different conveyor mechanism may require a different completion time. `SERIAL_WRITE_TIMEOUT_SECONDS` controls only the serial write timeout and defaults to 1 second.
+
+Therefore, in protocol version 1, a success ACK means the firmware reached the end of the routing command rather than merely accepting it.
+
 ## Compatibility
 
 Protocol version `1` now requires `version`, `command`, `produto_id`, `categoria` and `status`. The stricter contract prevents an unrelated or malformed serial response from being accepted as confirmation.
