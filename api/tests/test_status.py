@@ -108,6 +108,25 @@ class SerialAckTests(unittest.TestCase):
         with self.assertRaisesRegex(serial.SerialException, "ACK timeout"):
             self.send_with_ack(b"")
 
+    def test_connect_uses_configured_ack_and_write_timeouts(self) -> None:
+        controller = SerialController()
+        connection = FakeSerial(b"")
+
+        with (
+            patch.object(api_module, "SERIAL_ENABLED", True),
+            patch.object(api_module, "SERIAL_ACK_TIMEOUT_SECONDS", 5.0),
+            patch.object(api_module, "SERIAL_WRITE_TIMEOUT_SECONDS", 1.0),
+            patch.object(api_module.serial, "Serial", return_value=connection) as serial_ctor,
+        ):
+            self.assertTrue(controller.connect())
+
+        serial_ctor.assert_called_once_with(
+            api_module.ARDUINO_PORT,
+            api_module.BAUD_RATE,
+            timeout=5.0,
+            write_timeout=1.0,
+        )
+
     def test_rejects_non_json_ack(self) -> None:
         with self.assertRaisesRegex(serial.SerialException, "ACK JSON"):
             self.send_with_ack(b"OK\n")
