@@ -138,6 +138,19 @@ def main() -> int:
         print(f"Demo request failed: {exc}", file=sys.stderr)
         return 4
 
+    replay_response: dict[str, Any] | None = None
+    try:
+        replay_response = request_json(
+            "POST",
+            f"{base_url}/produto",
+            timeout=args.timeout,
+            headers=headers,
+            payload=DEMO_PACKAGES[0],
+        )
+    except requests.RequestException as exc:
+        print(f"Idempotency replay failed: {exc}", file=sys.stderr)
+        return 4
+
     after = {
         "total": get_counter(base_url, "/api/total_itens", "total_itens", args.timeout),
         "valid": get_counter(base_url, "/api/total_validos", "total_validos", args.timeout),
@@ -159,6 +172,7 @@ def main() -> int:
         "health": health,
         "before": before,
         "responses": responses,
+        "replay_response": replay_response,
         "after": after,
         "recent_count": len(recent),
     }
@@ -182,6 +196,13 @@ def main() -> int:
             f"unexpected statuses: expected {expected_statuses}, got {actual_statuses}"
         )
 
+    if not replay_response.get("duplicate"):
+        problems.append("replayed package was not reported as duplicate")
+
+    replay_serial = replay_response.get("serial") or {}
+    if replay_serial.get("mode") != "idempotent_replay":
+        problems.append("replayed package did not use idempotent replay mode")
+
     for key, expected_value in expected_after.items():
         if after[key] != expected_value:
             problems.append(
@@ -200,7 +221,10 @@ def main() -> int:
             print(f"VERIFY FAILED: {problem}", file=sys.stderr)
         return 5
 
-    print("VERIFY PASSED: API demo produced the expected state transitions.")
+    print(
+        "VERIFY PASSED: API demo produced the expected state transitions "
+        "and ignored the duplicate replay."
+    )
     return 0
 
 

@@ -155,6 +155,7 @@ class SerialController:
 
 
 serial_controller = SerialController()
+package_processing_lock = threading.Lock()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -234,44 +235,83 @@ async def processar_qr_code(
 ) -> dict[str, Any]:
     require_write_key(x_api_key)
 
-    status = package_status(data.categoria)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    normalized_category = data.categoria.strip().lower()
+    status = package_status(normalized_category)
 
-    try:
-        serial_ack = serial_controller.send_package(
-            produto_id=data.produto_id,
-            categoria=data.categoria.strip().lower(),
-            status=status,
-        )
-    except serial.SerialException as exc:
-        logging.error("Serial communication failed: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail="Hardware controller unavailable",
-        ) from exc
+    # Keep the duplicate check, hardware command and persistence in one critical
+    # section. This prevents concurrent retries from actuating the conveyor twice.
+    with package_processing_lock:
+        with get_connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT produto_id, categoria, descricao, peso, altura, status, timestamp
+                FROM pacotes
+                WHERE produto_id = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (data.produto_id,),
+            ).fetchone()
 
-    with get_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO pacotes
-                (produto_id, categoria, descricao, peso, altura, status, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                data.produto_id,
-                data.categoria,
-                data.descricao,
-                data.peso,
-                data.altura,
-                status,
-                timestamp,
-            ),
-        )
+        if existing is not None:
+            same_payload = (
+                existing["categoria"].strip().lower() == normalized_category
+                and existing["descricao"] == data.descricao
+                and float(existing["peso"]) == data.peso
+                and float(existing["altura"]) == data.altura
+            )
+            if not same_payload:
+                raise HTTPException(
+                    status_code=409,
+                    detail="produto_id already exists with different package data",
+                )
+
+            return {
+                "status": existing["status"],
+                "message": "Pacote já processado",
+                "timestamp": existing["timestamp"],
+                "duplicate": True,
+                "serial": {"ok": True, "mode": "idempotent_replay"},
+            }
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        try:
+            serial_ack = serial_controller.send_package(
+                produto_id=data.produto_id,
+                categoria=normalized_category,
+                status=status,
+            )
+        except serial.SerialException as exc:
+            logging.error("Serial communication failed: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Hardware controller unavailable",
+            ) from exc
+
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO pacotes
+                    (produto_id, categoria, descricao, peso, altura, status, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data.produto_id,
+                    normalized_category,
+                    data.descricao,
+                    data.peso,
+                    data.altura,
+                    status,
+                    timestamp,
+                ),
+            )
 
     return {
         "status": status,
         "message": "Pacote processado",
         "timestamp": timestamp,
+        "duplicate": False,
         "serial": serial_ack,
     }
 
