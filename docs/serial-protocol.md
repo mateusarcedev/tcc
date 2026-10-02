@@ -33,9 +33,9 @@ Example:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `version` | Recommended | Protocol version. Current version: `1`. |
-| `command` | Recommended | Command name. Current value: `sort`. |
-| `produto_id` | Recommended | Package identifier used for correlation. |
+| `version` | Yes | Protocol version. Must be `1`. |
+| `command` | Yes | Command name. Must be `sort`. |
+| `produto_id` | Yes | Package identifier used to correlate the ACK with the command. |
 | `categoria` | Yes | Category used to select the routing servo. |
 | `status` | Yes | `Válido` or `Inválido`. |
 
@@ -78,9 +78,19 @@ Missing required fields:
 }
 ```
 
+## ACK validation
+
+The API treats a package as hardware-confirmed only when it receives a newline-delimited JSON ACK that:
+
+- parses as a JSON object;
+- contains `"ok": true`;
+- contains the same `produto_id` sent in the command.
+
+A timeout, malformed response, NACK or mismatched `produto_id` is treated as a hardware communication failure. In that case the API returns HTTP 503 and does not persist the package as successfully processed.
+
 ## Compatibility
 
-The firmware still bases routing on `categoria` and `status`, so the additional version, command and package identifier fields are forward-compatible with the original command shape.
+Protocol version `1` now requires `version`, `command`, `produto_id`, `categoria` and `status`. The stricter contract prevents an unrelated or malformed serial response from being accepted as confirmation.
 
 ## Security note
 
