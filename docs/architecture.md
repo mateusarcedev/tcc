@@ -93,3 +93,25 @@ Runtime database files are intentionally ignored by Git. Use `python -m api.seed
 - Invalid QR JSON is ignored by the camera client.
 - Invalid serial JSON or missing required fields produces an Arduino NACK.
 - With `SERIAL_ENABLED=false`, the backend runs in simulation mode and still supports dashboard/demo usage.
+
+
+## Idempotency transaction boundary
+
+Package processing uses a SQLite `BEGIN IMMEDIATE` transaction before checking `produto_id`.
+
+This matters because an application-only lock protects only one Python process. The database transaction serializes competing package writes for all API processes that share the same SQLite file:
+
+```text
+BEGIN IMMEDIATE
+  -> check produto_id
+  -> send hardware command
+  -> require correlated ACK
+  -> insert processing event
+COMMIT
+```
+
+A concurrent request waits for the transaction. After the first request commits, the waiting request sees the existing `produto_id` and follows the idempotent replay path instead of issuing another hardware command.
+
+`DATABASE_BUSY_TIMEOUT_SECONDS` controls how long SQLite waits for the write reservation (default: 10 seconds). If the database remains busy, the API returns HTTP 503 rather than silently bypassing idempotency.
+
+The hardware deployment should still use a single API process as the serial-port owner. The database transaction is defense-in-depth for concurrent HTTP execution and shared-database deployments; it does not turn a USB serial device into a multi-process resource.
