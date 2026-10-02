@@ -1,10 +1,18 @@
 # Portfolio media
 
-This directory is reserved for visual evidence of the real project.
+This directory contains portfolio visuals for the project.
 
-Do not add stock images, generated mockups or screenshots that imply physical behavior that was not actually recorded.
+Generated or reconstructed visuals are allowed only when they are clearly labeled as reconstructions and do not imply that a physical behavior was actually recorded. Stock imagery or misleading mockups must not be presented as evidence of a real run.
 
-## Target files
+## Current visual
+
+### `tcc-conveyor-3d-reconstruction.webp`
+
+A labeled 3D reconstruction based on photographs of the original prototype and reference images of the conveyor kit.
+
+It is intended to communicate the hardware layout when original operating footage is unavailable. It must not be described as a photo, CAD source model, or video capture of the real system.
+
+## Future physical-demo assets
 
 ### `conveyor-demo.gif`
 
