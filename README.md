@@ -308,7 +308,7 @@ Developed as a Computer Engineering final project at **Faculdade Metropolitana d
 Authors:
 
 - Mateus Arce
-- Tiago Henrique
+- [Tiago Henrique](https://github.com/tiagohenriquee)
 
 The React Native application under `app/` is preserved as an earlier prototype. The Next.js dashboard is the primary integrated monitoring interface.
 
