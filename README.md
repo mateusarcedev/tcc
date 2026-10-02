@@ -312,4 +312,6 @@ Authors:
 
 The React Native application under `app/` is preserved as an earlier prototype. The Next.js dashboard is the primary integrated monitoring interface.
 
-No open-source license has been selected yet.
+## License
+
+This project is licensed under the [MIT License](LICENSE).
