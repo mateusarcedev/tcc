@@ -184,8 +184,16 @@ def init_db() -> None:
 
 
 def require_write_key(x_api_key: str | None = Header(default=None)) -> None:
+    if SERIAL_ENABLED and not API_TOKEN:
+        logging.error("Hardware mode rejected: API_TOKEN is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Hardware mode requires API authentication",
+        )
+
     if not API_TOKEN:
         return
+
     if x_api_key is None or not secrets.compare_digest(x_api_key, API_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -225,6 +233,8 @@ async def health() -> dict[str, Any]:
         "database": "ok",
         "serial_enabled": SERIAL_ENABLED,
         "serial_mode": "hardware" if SERIAL_ENABLED else "simulation",
+        "write_auth": "required" if API_TOKEN else "disabled",
+        "hardware_ready": not SERIAL_ENABLED or bool(API_TOKEN),
     }
 
 
