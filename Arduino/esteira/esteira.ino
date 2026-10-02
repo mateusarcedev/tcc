@@ -92,14 +92,35 @@ void loop() {
       return;
     }
 
+    const int version = doc["version"] | 0;
+    const char* command = doc["command"];
     const char* category = doc["categoria"];
     const char* status = doc["status"];
     const char* productId = doc["produto_id"];
 
-    if (category == nullptr || status == nullptr) {
+    if (
+      productId == nullptr ||
+      category == nullptr ||
+      status == nullptr ||
+      command == nullptr
+    ) {
       lcd.clear();
       lcd.print("Dados invalidos");
       sendAck(false, productId, "missing_fields");
+      return;
+    }
+
+    if (version != 1) {
+      lcd.clear();
+      lcd.print("Versao invalida");
+      sendAck(false, productId, "unsupported_version");
+      return;
+    }
+
+    if (strcmp(command, "sort") != 0) {
+      lcd.clear();
+      lcd.print("Comando invalido");
+      sendAck(false, productId, "invalid_command");
       return;
     }
 
