@@ -156,7 +156,6 @@ class SerialController:
 
 
 serial_controller = SerialController()
-package_processing_lock = threading.Lock()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -236,7 +235,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/produto")
-async def processar_qr_code(
+def processar_qr_code(
     data: QRCodeData,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
@@ -246,12 +245,11 @@ async def processar_qr_code(
     status = package_status(normalized_category)
 
     # BEGIN IMMEDIATE obtains SQLite's write reservation before the duplicate
-    # check. Together with the in-process lock, this serializes package
-    # processing across threads, workers and API instances sharing this DB.
+    # check. This serializes package processing across concurrent requests and
+    # processes that share the same SQLite database.
     try:
-        with package_processing_lock:
-            with get_connection() as connection:
-                connection.execute("BEGIN IMMEDIATE")
+        with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
 
                 existing = connection.execute(
                     """
