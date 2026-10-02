@@ -36,6 +36,7 @@ SERIAL_ENABLED = env_bool("SERIAL_ENABLED", False)
 ARDUINO_PORT = os.getenv("ARDUINO_PORT", "/dev/cu.usbserial-120")
 BAUD_RATE = int(os.getenv("BAUD_RATE", "9600"))
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "pacotes.db")))
+DATABASE_BUSY_TIMEOUT_SECONDS = float(os.getenv("DATABASE_BUSY_TIMEOUT_SECONDS", "10"))
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
 CORS_ORIGINS = [
     origin.strip()
@@ -155,13 +156,18 @@ class SerialController:
 
 
 serial_controller = SerialController()
-package_processing_lock = threading.Lock()
 
 
 def get_connection() -> sqlite3.Connection:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = sqlite3.connect(
+        DATABASE_PATH,
+        timeout=DATABASE_BUSY_TIMEOUT_SECONDS,
+    )
     connection.row_factory = sqlite3.Row
+    connection.execute(
+        f"PRAGMA busy_timeout = {int(DATABASE_BUSY_TIMEOUT_SECONDS * 1000)}"
+    )
     return connection
 
 
@@ -229,7 +235,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/produto")
-async def processar_qr_code(
+def processar_qr_code(
     data: QRCodeData,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
@@ -238,10 +244,13 @@ async def processar_qr_code(
     normalized_category = data.categoria.strip().lower()
     status = package_status(normalized_category)
 
-    # Keep the duplicate check, hardware command and persistence in one critical
-    # section. This prevents concurrent retries from actuating the conveyor twice.
-    with package_processing_lock:
+    # BEGIN IMMEDIATE obtains SQLite's write reservation before the duplicate
+    # check. This serializes package processing across concurrent requests and
+    # processes that share the same SQLite database.
+    try:
         with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+
             existing = connection.execute(
                 """
                 SELECT produto_id, categoria, descricao, peso, altura, status, timestamp
@@ -253,43 +262,42 @@ async def processar_qr_code(
                 (data.produto_id,),
             ).fetchone()
 
-        if existing is not None:
-            same_payload = (
-                existing["categoria"].strip().lower() == normalized_category
-                and existing["descricao"] == data.descricao
-                and float(existing["peso"]) == data.peso
-                and float(existing["altura"]) == data.altura
-            )
-            if not same_payload:
-                raise HTTPException(
-                    status_code=409,
-                    detail="produto_id already exists with different package data",
+            if existing is not None:
+                same_payload = (
+                    existing["categoria"].strip().lower() == normalized_category
+                    and existing["descricao"] == data.descricao
+                    and float(existing["peso"]) == data.peso
+                    and float(existing["altura"]) == data.altura
                 )
+                if not same_payload:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="produto_id already exists with different package data",
+                    )
 
-            return {
-                "status": existing["status"],
-                "message": "Pacote já processado",
-                "timestamp": existing["timestamp"],
-                "duplicate": True,
-                "serial": {"ok": True, "mode": "idempotent_replay"},
-            }
+                return {
+                    "status": existing["status"],
+                    "message": "Pacote já processado",
+                    "timestamp": existing["timestamp"],
+                    "duplicate": True,
+                    "serial": {"ok": True, "mode": "idempotent_replay"},
+                }
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        try:
-            serial_ack = serial_controller.send_package(
-                produto_id=data.produto_id,
-                categoria=normalized_category,
-                status=status,
-            )
-        except serial.SerialException as exc:
-            logging.error("Serial communication failed: %s", exc)
-            raise HTTPException(
-                status_code=503,
-                detail="Hardware controller unavailable",
-            ) from exc
+            try:
+                serial_ack = serial_controller.send_package(
+                    produto_id=data.produto_id,
+                    categoria=normalized_category,
+                    status=status,
+                )
+            except serial.SerialException as exc:
+                logging.error("Serial communication failed: %s", exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Hardware controller unavailable",
+                ) from exc
 
-        with get_connection() as connection:
             connection.execute(
                 """
                 INSERT INTO pacotes
@@ -306,6 +314,12 @@ async def processar_qr_code(
                     timestamp,
                 ),
             )
+    except sqlite3.OperationalError as exc:
+        logging.error("Database transaction failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable",
+        ) from exc
 
     return {
         "status": status,
