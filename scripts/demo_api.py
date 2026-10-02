@@ -4,9 +4,18 @@ import argparse
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import requests
+
+CONCURRENT_PACKAGE = {
+    "produto_id": "DEMO-CONCURRENT-001",
+    "categoria": "smartphones",
+    "descricao": "Concurrent idempotency demo",
+    "peso": 0.50,
+    "altura": 16.0,
+}
 
 DEMO_PACKAGES = [
     {
@@ -151,6 +160,24 @@ def main() -> int:
         print(f"Idempotency replay failed: {exc}", file=sys.stderr)
         return 4
 
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    request_json,
+                    "POST",
+                    f"{base_url}/produto",
+                    timeout=args.timeout,
+                    headers=headers,
+                    payload=CONCURRENT_PACKAGE,
+                )
+                for _ in range(2)
+            ]
+            concurrent_responses = [future.result() for future in futures]
+    except requests.RequestException as exc:
+        print(f"Concurrent idempotency check failed: {exc}", file=sys.stderr)
+        return 4
+
     after = {
         "total": get_counter(base_url, "/api/total_itens", "total_itens", args.timeout),
         "valid": get_counter(base_url, "/api/total_validos", "total_validos", args.timeout),
@@ -173,6 +200,7 @@ def main() -> int:
         "before": before,
         "responses": responses,
         "replay_response": replay_response,
+        "concurrent_responses": concurrent_responses,
         "after": after,
         "recent_count": len(recent),
     }
@@ -184,8 +212,8 @@ def main() -> int:
 
     actual_statuses = [response.get("status") for response in responses]
     expected_after = {
-        "total": before["total"] + 3,
-        "valid": before["valid"] + 2,
+        "total": before["total"] + 4,
+        "valid": before["valid"] + 3,
         "invalid": before["invalid"] + 1,
     }
 
@@ -202,6 +230,14 @@ def main() -> int:
     replay_serial = replay_response.get("serial") or {}
     if replay_serial.get("mode") != "idempotent_replay":
         problems.append("replayed package did not use idempotent replay mode")
+
+    concurrent_duplicate_flags = sorted(
+        bool(response.get("duplicate")) for response in concurrent_responses
+    )
+    if concurrent_duplicate_flags != [False, True]:
+        problems.append(
+            "concurrent duplicate requests were not reduced to one processing event"
+        )
 
     for key, expected_value in expected_after.items():
         if after[key] != expected_value:
@@ -223,7 +259,7 @@ def main() -> int:
 
     print(
         "VERIFY PASSED: API demo produced the expected state transitions "
-        "and ignored the duplicate replay."
+        "and serialized duplicate replays, including concurrent requests."
     )
     return 0
 
