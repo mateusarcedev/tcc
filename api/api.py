@@ -35,6 +35,8 @@ def env_bool(name: str, default: bool = False) -> bool:
 SERIAL_ENABLED = env_bool("SERIAL_ENABLED", False)
 ARDUINO_PORT = os.getenv("ARDUINO_PORT", "/dev/cu.usbserial-120")
 BAUD_RATE = int(os.getenv("BAUD_RATE", "9600"))
+SERIAL_ACK_TIMEOUT_SECONDS = float(os.getenv("SERIAL_ACK_TIMEOUT_SECONDS", "5"))
+SERIAL_WRITE_TIMEOUT_SECONDS = float(os.getenv("SERIAL_WRITE_TIMEOUT_SECONDS", "1"))
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "pacotes.db")))
 DATABASE_BUSY_TIMEOUT_SECONDS = float(os.getenv("DATABASE_BUSY_TIMEOUT_SECONDS", "10"))
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
@@ -76,8 +78,11 @@ class SerialController:
             self._connection = serial.Serial(
                 ARDUINO_PORT,
                 BAUD_RATE,
-                timeout=1,
-                write_timeout=1,
+                # Firmware acknowledges only after the physical routing action
+                # completes (~2 s today), so the read timeout must exceed that
+                # duration. Keep it configurable for different mechanisms.
+                timeout=SERIAL_ACK_TIMEOUT_SECONDS,
+                write_timeout=SERIAL_WRITE_TIMEOUT_SECONDS,
             )
             logging.info(
                 "Serial connected on %s at %s baud",
