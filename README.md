@@ -289,17 +289,15 @@ Runtime databases, logs, environment files, Python bytecode, build output and OS
 
 See [SECURITY.md](SECURITY.md).
 
-## Visual demo status
+## Visual reconstruction
 
-The software path is fully reproducible and continuously verified in CI.
+![3D reconstruction of the conveyor prototype](docs/media/tcc-conveyor-3d-reconstruction.webp)
 
-The remaining portfolio asset is a short recording of the **physical conveyor** showing:
+> **3D reconstruction:** this image was created from photographs of the original prototype and reference images of the conveyor kit. It is a visual reconstruction for documentation and portfolio presentation, **not a photograph or recording of a physical run**.
 
-```text
-QR read → API processing → Arduino command → servo routing → dashboard update
-```
+The software path is fully reproducible and continuously verified in CI. A real video/GIF of the original conveyor operating is not currently available.
 
-The repository intentionally does not fake this media. The capture plan and target filenames are documented in [docs/demo-guide.md](docs/demo-guide.md) and [docs/media/README.md](docs/media/README.md).
+If original footage is recovered in the future, it can be added separately as physical demo evidence. See [docs/media/README.md](docs/media/README.md).
 
 ## Academic context
 
