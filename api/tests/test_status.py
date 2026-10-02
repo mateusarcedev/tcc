@@ -9,7 +9,7 @@ os.environ["DATABASE_PATH"] = ":memory:"
 import serial  # noqa: E402
 
 import api.api as api_module  # noqa: E402
-from api.api import SerialController, package_status  # noqa: E402
+from api.api import SerialController, package_status, require_write_key  # noqa: E402
 
 
 class PackageStatusTests(unittest.TestCase):
@@ -21,6 +21,42 @@ class PackageStatusTests(unittest.TestCase):
 
     def test_other_categories_are_invalid(self) -> None:
         self.assertEqual(package_status("livros"), "Inválido")
+
+
+class WriteAuthenticationTests(unittest.TestCase):
+    def test_simulation_allows_missing_token_for_local_demo(self) -> None:
+        with (
+            patch.object(api_module, "SERIAL_ENABLED", False),
+            patch.object(api_module, "API_TOKEN", ""),
+        ):
+            require_write_key(None)
+
+    def test_hardware_mode_refuses_to_run_without_configured_token(self) -> None:
+        with (
+            patch.object(api_module, "SERIAL_ENABLED", True),
+            patch.object(api_module, "API_TOKEN", ""),
+        ):
+            with self.assertRaises(api_module.HTTPException) as context:
+                require_write_key(None)
+
+        self.assertEqual(context.exception.status_code, 503)
+
+    def test_hardware_mode_rejects_missing_client_key(self) -> None:
+        with (
+            patch.object(api_module, "SERIAL_ENABLED", True),
+            patch.object(api_module, "API_TOKEN", "secret-token"),
+        ):
+            with self.assertRaises(api_module.HTTPException) as context:
+                require_write_key(None)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_hardware_mode_accepts_matching_client_key(self) -> None:
+        with (
+            patch.object(api_module, "SERIAL_ENABLED", True),
+            patch.object(api_module, "API_TOKEN", "secret-token"),
+        ):
+            require_write_key("secret-token")
 
 
 class FakeSerial:
